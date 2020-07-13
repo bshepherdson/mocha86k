@@ -1,0 +1,48 @@
+; Mocha 86k emulator test
+; By Braden Shepherdson (shepheb)
+
+; Calling convention: A, B, and C are caller-saved, and so is EX.
+; X Y Z I J are callee-saved. First three parameters are in A, B, C.
+; Return values in A. More parameters on the stack; 4th on top, 5th underneath.
+
+; General plan for tests:
+; - All deliberate tests have a number, which is reported when they fail.
+;   These numbers are all .def constants that start with T_
+; - There are also numbered error states for non-tests, like PC ending up back
+;   at 0.
+
+; Tests are introduced with the header:
+; mktest TEST_NAME, number
+; That sets the [test] variable, and bumps [test_count].
+.macro mktest=.def %0, %1 %n setw [test], %0 %n addw [test_count], 1
+
+; ENTRY POINT
+:reset_detected
+  ; A bit of self-modifying code here.
+  ; This detects if PC returns to 0, because of an emulator bug.
+  setw [reset_detected+0], 0x1c3a ; SETW PC, imm16
+  setw [reset_detected+1], why_did_we_reset
+  setl pc, main
+
+:why_did_we_reset
+brk
+setl pc, spin
+
+.include "hardware.masm"
+.include "display.masm"
+
+:main
+setl sp, 0xef80
+;Initialization
+jsrl init_hardware
+jsrl init_display
+
+; Print the banner
+setw [color], bg_blue | fg_white
+jsrl print_pc
+.dat "Mocha 86k EMULATOR TEST", 0
+addl [cursor], 32 ; Leave a blank line.
+
+:spin
+setl pc, spin
+

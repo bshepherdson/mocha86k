@@ -1,0 +1,122 @@
+; Display routines for the test suite.
+
+.def vram, 0x8000
+.def max_cursor, 0x8000 + 384
+
+.def fg_black, 0
+.def fg_red, 0x4000
+.def fg_blue, 0x9000
+.def fg_yellow, 0x6000
+.def fg_white, 0xf000
+.def bg_white, 0x0f00
+.def bg_blue, 0x0100
+
+:color   .dat 0
+:cursor  .dat 0, vram ; 32-bit value.
+
+; Prints a 0-terminated string immediately following the call to this function.
+; Returns to just after the string.
+:print_pc
+setl a, pop
+setl push, x
+setl x, a
+clrl a
+:print_pc_loop
+setw a, [x]+
+brew a, 0, print_pc_done
+jsrl print_char
+setl pc, print_pc_loop
+
+:print_pc_done
+; X is pointing just after the 0, which is perfect.
+setl a, x
+setl x, pop
+setl pc, a ; Returns to the caller, after the string.
+
+
+; Prints a single character. Scrolls if necessary before printing.
+:print_char ; (char) -> void
+setl b, [cursor]
+brll b, max_cursor, print_char_1
+
+; Scroll up a line.
+pshw {i, j}
+setl i, vram+32
+setl j, vram+32
+:scroll_loop
+setl [i]+, [j]+
+brll j, max_cursor, scroll_loop
+
+subl b, 32
+
+; Clear the last line.
+setl i, b
+setw c, [color]
+borw c, 32 ; space
+:clear_line_loop
+setw [i]+, c
+brll i, max_cursor, clear_line_loop
+
+; Now done scrolling.
+popw {i, j}
+
+:print_char_1 ; Continue with actually printing. B is the cursor position.
+borw a, [color]
+setw [b]+, a
+setl [cursor], b
+setl pc, pop
+
+
+:clear_screen
+setl a, vram
+clrl b
+setw b, [color]
+borw b, 32 ; space
+:clear_screen_loop
+setw [a]+, b
+brll a, max_cursor, clear_screen_loop
+setl pc, pop
+
+
+; Sets up the LEM: map VRAM, standard font and palette.
+:init_display
+setw [color], fg_black|bg_white
+jsrl clear_screen
+
+setl a, dev_lem1802
+jsrl get_device
+setl c, a
+setw a, 0
+setw b, vram
+hwiw c
+setl pc, pop
+
+
+; Prints an unsigned number in decimal format.
+:print_number ; (number) -> void
+brel a, 0, print_zero ; Special case
+setl b, print_number_buffer
+
+:print_number_loop
+brel a, 0, print_number_done
+divw a, 10 ; EX is now our digit to record (the modulus).
+setw [b]+, ex
+setl pc, print_number_loop
+
+:print_number_done
+ifel b, print_number_buffer
+  setl pc, pop
+
+setw a, -[b]
+addw a, 0x30 ; '0', converting to characters.
+setl push, b
+jsrl print_char
+setl b, pop
+setl pc, print_number_done
+
+:print_zero ; Special case for when the input is 0.
+setl a, 0x30 ; '0'
+setl pc, print_char ; tail call
+
+:print_number_buffer .reserve 5
+
