@@ -24,12 +24,23 @@
   setw [reset_detected+1], why_did_we_reset
   setl pc, main
 
-:why_did_we_reset
-brk
-setl pc, spin
-
 .include "hardware.masm"
 .include "display.masm"
+
+:why_did_we_reset
+setw ia, 0 ; No more interrupts.
+setw [color], fg_red | bg_white
+jsrl print_pc
+.dat 10
+;     0123456789ABCDEF0123456789ABCDEF
+.dat "CPU reset detected! That is not "
+.dat "supposed to happen.", 0
+setl pc, spin
+
+
+:test .dat 0
+:test_count .dat 0
+
 
 :main
 setl sp, 0xef80
@@ -43,6 +54,21 @@ jsrl print_pc
 .dat "Mocha 86k EMULATOR TEST", 0
 addl [cursor], 32 ; Leave a blank line.
 
+; Testing
+setw [test], 17
+jsrl fail
+; Done testing
+
 :spin
+setl pc, spin
+
+; Called when a test fails. Reports the error, then spins.
+:fail ; () -> void
+setw [color], fg_red | bg_white
+jsrl print_pc
+.dat "Test failed: ", 0
+clrl a
+setw a, [test]
+jsrl print_number
 setl pc, spin
 
