@@ -5,29 +5,31 @@ instructions, addressing modes, and especially their encoding is subject to
 change. There's a summary of ideas for changes to improve the spec at the bottom.
 Feel free to send a PR if you have changes to suggest!
 
-This is a prototype design for a 32-bit capable DCPU-16 competitor.
+This is a prototype design for a 32-bit DCPU-16 successor.
 The design is largely inspired by the architecture of the real-world Motorola
 68k family.
 
 It aims to be as familiar as possible to the DCPU-16 in terms of programming
 model, though there are some important differences.
 
-Generally the operating speed of the Mocha 86k is 1MHz, 1 million instruction
-cycles per second. Since even simple instructions usually cost 2-4 cycles, the
-operating rate is something like 250k instructions per second, but that can
+## Performance
+
+Generally the operating speed of the Mocha 86k is 2MHz, 2 million clock
+cycles per second. Since even modest instructions usually cost 2-6 cycles, the
+operating rate is something like 500k instructions per second, but that can
 vary a lot.
 
 
 ## High-level Architecture
 
-Memory address space is a uniform, unsegmented 32-bit space. Each address in
+Memory is a uniform, unsegmented 32-bit address space. Each address in
 memory refers to a 16-bit word. Note that most machines have a far smaller
-memory than the 4GW this allows; most in fact have a 24-bit address bus and are
-limited to 16MW of memory.
+memory than the 4GW this allows. Most in-universe, shipping Mocha 86k machines
+have a 24-bit address bus, and so have 16MW of memory.
 
 There are 11 32-bit registers, one 16-bit register, and one single bit flag.
 
-- 8 general-purpose 32-bit registers: `A`, `B`, `C`, `X`, `Y`, `Z`, `I`, `J`.
+- 8 general purpose 32-bit registers: `A`, `B`, `C`, `X`, `Y`, `Z`, `I`, `J`.
 - 32-bit program counter `PC`
 - 32-bit stack pointer `SP`
 - 16-bit interrupt address `IA`
@@ -43,10 +45,16 @@ the 32-bit value `$deadbeef` to memory address `$10000`, then `$10000` contains
 `$dead`, and `$10001` contains `$beef`.
 
 
-### Operand Sizes
+### Size Suffixes
 
-Most instructions can work on either 16-bit words or 32-bit "longwords"; this is
-indicated with the `.w` and `.l` suffixes on instructions.
+Every instruction specifies either 16-bit words or 32-bit "longwords"; this is
+indicated by most instructions ending in `W` or `L`. Nullary instructions don't
+have these suffixes.
+
+A few other instructions (`SWP`, `EXT`) only make sense on longwords, but they
+can still be assembled in word form. They don't do anything in that case.
+
+### Words and Longwords
 
 But what happens when reading and writing a 16-bit value to a 32-bit register?
 
@@ -78,7 +86,7 @@ DCPU-16.
 - Since memory is accessed a word at a time, reading and writing words is faster
   than longwords, if they are sufficient for your purposes.
 - Be careful when writing words to registers, as the upper word is not cleared.
-  - See "Operand Sizes" above for details.
+  - See "Words and Longwords" above for details.
 - There are no `MOD` and `MDI` instructions; `DIV` and `DVI` put the quotient in
   the destination and remainder in `EX`.
 - Multiplication and division are realistically more expensive than addition.
@@ -90,9 +98,6 @@ DCPU-16.
   - Of particular mention are `[A]+` and `-[A]`, which read memory based on a
     register with postincrement or predecrement respectively. These replace
     `STI` and `STD` and are much more flexible.
-  - Note one downside: binary operands now have only one complex operand; the
-    other must always be a simple register.
-  - Binary branches, and `SET`, however, still have two complex operands.
 - Branching instructions are much more powerful, for several reasons.
   - There are "branching" instructions (eg. `BRE` branch equal) alongside the
     `IFx` "skipping" ones.
@@ -100,15 +105,14 @@ DCPU-16.
     `IFE blah, blah; SET PC, somewhere_nearby`
   - In addition, there are now four unary branching/skipping instructions, which
     check whether their single operand is zero, nonzero, negative or positive.
-    They have the same branching (`BZR` "branch if zero") and skipping (`IZR`
-    "if zero") types.
+    They only have the branching form, not "skipping".
   - Finally, the unary branches have "decrementing" counterparts, that decrement
     the operand's value by one **after** checking the condition. This is great
-    for writing loops.
-- Hardware is still mostly compatible! `HWN`, `HWQ`, and `HWI` still work the
+    for writing loops counting down a length.
+- DCPU hardware is fully supported! `HWN`, `HWQ`, and `HWI` still work the
   same way (mostly; `HWQ` writes the 32-bit IDs to single 32-bit registers).
-  Hardware that reads and writes registers touches their lower words, like a `.w`
-  instruction.
+  Hardware that reads and writes registers touches their lower words, like a
+  word-sized `setw` instruction.
 
 
 ## Instruction Format
@@ -117,75 +121,101 @@ Each instruction begins with a single word. Some instructions have an additional
 word following the first, giving further details of the operation. Additionally,
 some addressing modes need extra values, which are put after the instruction.
 
-For instructions with two complex operands (`SET` and the `IFx/BRx` family), any
-extra words are written for the "right-hand" operand first. That is,
-`SET y, x` has the extra words needed for `x`, then those for `y`. Similarly,
-`IFE y, x` puts the extras for `x`, then `y`.
+Instructions are written here as `SET dest, src`.
 
-Currently instructions take on a few basic shapes:
+To be perfectly clear, the order of words in an instrcution is always:
 
-| Type       | Format              | Notes                                                        |
-| :--        | :--                 | :--                                                          |
-| 0 argument | `00000000 0000oooo` | eg. `RFI`, `NOP`, `BRK`.                                     |
-| Register   | `00000000 00ooorrr` | Register number in `rrr`, eg. `HWN`                          |
-| 1 operand  | `0000oooo oLAAAAAA` | `L` usually `1` for longwords, sometimes an extra opcode bit |
-| Branches   | `000011oo oLBBBBBB` | Overlaps with the above. `BBBBBB` = left operand             |
-|            | `jjjjjjjj jjAAAAAA` | Overlaps with the above. `AAAAAA` = right operand            |
-| `SET`s     | `001LBBBB BBAAAAAA` | `L` for longwords; `AAA` moved into `BBB`.                   |
-| Binary     | `ooooorrr DLAAAAAA` | `ooooo` opcode, `rrr` register, `AAA` operand                |
-|            |                     | `D` set if the complex operand is the destination            |
-|            |                     | `L` set for longwords.                                       |
+```
+main opcode
+(any extra words required by the opcode)
+(extra words for the source operand)
+(extra words for the destination operand)
+```
+
+(Branches don't have a "source" and "destination", but they are spelled the
+same way: `IFE dest, src`.)
+
+There are three basic formats for instructions: nullary, unary and binary. In
+addition, the unary branches (eg. `BZR`) have an extra word. Finally, some binary
+instructions are assembled in "long form", with an extra word giving the opcode.
+
+| Type             | Format              | Notes                                 |
+| :--              | :--                 | :--                                   |
+| Nullary          | `L0000000 00oooooo` | eg. `RFI`, `NOP`, `BRK`               |
+| Unary            | `L000oooo ooaaaaaa` | `aaaaaa` is the single operand        |
+| Unary Branch     | `L000oooo ooaaaaaa` | Second word is 16-bit signed offset   |
+|                  | `ssssssss ssssssss` |                                       |
+| Binary           | `Looobbbb bbaaaaaa` | `a` is src, `b` is dest               |
+| Binary Long Form | `L111bbbb bbaaaaaa` | Binary with opcode 7                  |
+|                  | `ssssssss sssooooo` | Real opcode is `o`; branch offset `s` |
+
+The 6-bit operands take many different formats, detailed below.
+
+The instruction descriptions refer to `a` and `b`, the source and destination
+operands. Not to be confused with `A` and `B`, the registers.
 
 
-The 6-bit complex operands take many different formats, detailed below.
-
-
-### Addressing Modes
+### Operands
 
 After the fundamental shift to 32-bit, this is easily the most vital difference
-from the DCPU-16. There are now vastly more powerful and flexible ways to access
+from the DCPU-16. There are now more powerful and flexible ways to access
 operands.
-
-This carries two downsides: more to learn, and more bits in the instruction
-encoding. Arithmetic operations (eg. `ADD`, `XOR`) are limited to working on a
-general-purpose register and a complex operand.
-
-On the other hand, `SET` and the branching instructions can use the full power
-of these addressing modes for both their operands.
 
 This table summarizes the addressing modes, and their encoding, and then each
 one has a section describing its details. Addressing modes are encoded as
-`aaaRRR` where `aaa` is a 3-bit addressing mode number, and `RRR` is either a
+`mmmRRR` where `mmm` is a 3-bit addressing mode number, and `RRR` is either a
 register number (`A` = 0, `J` = 7) or a special code.
 
-| Mode                 | Syntax          | Encoding | Register | Width |
-| :--                  | :--             | :--      | :--      | :--   |
-| Register             | `A`             | `000`    | Reg.     | 0     |
-| Reg. indirect        | `[A]`           | `001`    | Reg.     | 0     |
-| Reg. postincrement   | `[A]+`          | `010`    | Reg.     | 0     |
-| Reg. predecrement    | `-[A]`          | `011`    | Reg.     | 0     |
-| Reg. offset          | `[A+lit]`       | `100`    | Reg.     | 1     |
-| Reg. index           | `[A,B]`         | `101`    | Reg.     | 1     |
-| PC                   | `PC`            | `110`    | `000`    | 0     |
-| SP                   | `SP`            | `110`    | `001`    | 0     |
-| EX                   | `EX`            | `110`    | `010`    | 0     |
-| IA                   | `IA`            | `110`    | `011`    | 0     |
-| [SP] (aka `PEEK`)    | `[SP]`          | `110`    | `100`    | 0     |
-| Push/pop             | `[SP]+`/`-[SP]` | `110`    | `101`    | 0     |
-|                      | `PUSH`/`POP`    |          |          |       |
-| Literal 0            | `0`             | `110`    | `110`    | 0     |
-| Literal 1            | `1`             | `110`    | `111`    | 0     |
-| Absolute word        | `[lit]`         | `111`    | `000`    | 1     |
-| Absolute longword    | `[lit]`         | `111`    | `001`    | 2     |
-| Immediate word       | `lit`           | `111`    | `010`    | 1     |
-| Immediate longword   | `lit`           | `111`    | `011`    | 2     |
-| PC-relative indirect | `[PC+lit]`      | `111`    | `100`    | 1     |
-| PC-relative index    | `[PC, A]`       | `111`    | `101`    | 1     |
-| [SP+word]            | `[SP+lit]`      | `111`    | `110`    | 1     |
-| Reserved             |                 | `111`    | `111`    | 0     |
+| Mode                  | Syntax          | Encoding | Register | Width |
+| :--                   | :--             | :--      | :--      | :--   |
+| Register              | `A`             | `000`    | Reg.     | 0     |
+| Reg. indirect         | `[A]`           | `001`    | Reg.     | 0     |
+| Reg. postincrement    | `[A]+`          | `010`    | Reg.     | 0     |
+| Reg. predecrement     | `-[A]`          | `011`    | Reg.     | 0     |
+| Reg. offset           | `[A+lit]`       | `100`    | Reg.     | 1     |
+| Reg. index            | `[A,B]`         | `101`    | Reg.     | 1     |
+| PC                    | `PC`            | `110`    | `000`    | 0     |
+| SP                    | `SP`            | `110`    | `001`    | 0     |
+| EX                    | `EX`            | `110`    | `010`    | 0     |
+| IA                    | `IA`            | `110`    | `011`    | 0     |
+| [SP] (aka `PEEK`)     | `[SP]`          | `110`    | `100`    | 0     |
+| Push/pop              | `[SP]+`/`-[SP]` | `110`    | `101`    | 0     |
+|                       | `PUSH`/`POP`    |          |          |       |
+| Literal 0             | `0`             | `110`    | `110`    | 0     |
+| Literal 1             | `1`             | `110`    | `111`    | 0     |
+| Absolute word         | `[lit]`         | `111`    | `000`    | 1     |
+| Absolute longword     | `[lit]`         | `111`    | `001`    | 2     |
+| Immediate word        | `lit`           | `111`    | `010`    | 1     |
+| Immediate longword    | `lit`           | `111`    | `011`    | 2     |
+| PC-relative indirect  | `[PC+lit]`      | `111`    | `100`    | 1     |
+| PC-relative index     | `[PC, A]`       | `111`    | `101`    | 1     |
+| [SP+word]             | `[SP+lit]`      | `111`    | `110`    | 1     |
+| Immediate signed word | `lit`           | `111`    | `111`    | 1     |
 
 You'll note that many of these addressing modes also exist on the DCPU-16,
 though the encoding is different.
+
+Note also that the "width", that is the number of extra words, does not depend
+on the `L` bit for the instruction. There's nothing wrong (at least, in terms
+of the encoding) with writing `ADDW B, 123456`. That will be encoded as a 16-bit
+add with a 32-bit literal, which will be read in, and then the lower 16 bits of
+the literal will be added to `B`.
+
+In particular, the literal offsets used by the Register offset, and PC- and
+SP-relative indirect modes, are always 1 word. The absolute and immediate
+word/longword modes are always exactly that.
+
+(For clarity, that instruction is encoded as:
+```
+00100000 01111011  opcode
+00000000 00000001  high word
+11100010 01000000  low word
+```)
+
+On the other hand, the effect of the incrementing and decrementing modes is
+impacted by the `L` bit. When we're doing 32-bit arithmetic, we read and write
+longwords, and increment/decrement by 2.
+
 
 #### Concept: Effective Address
 
@@ -210,8 +240,8 @@ Effective address is `r`. After reading `r` as our effective address, we add 1
 
 #### Register predecrement
 
-Before reading `r`, we decrement it by 1 (for a word) or 2 (longword). Then this
-new value of `r` is the effective address.
+First decrement `r` by 1 (for a word) or 2 (longword). Then this new value of
+`r` is the effective address.
 
 #### Register offset
 
@@ -304,18 +334,39 @@ Instruction timing is much more complex than in the DCPU-16, due to several
 factors. The processor is microcoded internally, and it's really these microcode
 operations that account for cycles.
 
-Here are the basic timings:
+The fundamental timings are that it takes 1 cycle to:
 
-1 cycle each:
-
-- Reading and writing each **word** of memory.
+- Read and write each **word** of memory.
   - That includes reading instructions, extra words for operands, and any memory
     accesses in the operations.
-- An extra for any addition performed by an indexing or offset addressing mode.
+- Basic 32-bit ALU operations (eg. addition, subtraction, bitwise and).
+  - That includes operations to compute the effective address for an operand.
+
+The "cycles" counts given in these tables are the fundamental, intrinsic costs
+of each instruction, usually 1 or 2. Any other operations to compute effective
+addresses, read and write memory, etc. are extra.
 
 Note that there's a 1-cycle "discount" caused by pipelined reading of the next
 instruction. However, if the current instruction changes `PC` in any way, that
 pipelined read is wasted and the CPU must wait for the fresh read.
+
+Some examples illustrate:
+
+- `ADDW B, A` - 2 cycles (read instruction, 1 ALU op)
+- `ADDL B, A` - 2 cycles (read instruction, 1 ALU op)
+  - 16- and 32-bit ALU operations are equally fast.
+- `ADDW [B], 10` - 5 cycles
+  - Read instruction, read literal 10, read `[B]`, add, write `[B]`.
+- `ADDL [B], 10` - 7 cycles
+  - Read instruction, read literal 10, read `[B]`, read `[B+1]`, add, write
+    `[B]`, write `[B+1]`.
+  - Note that the shifting of `[B]` into the high word of the ALU is built in
+    and doesn't count for an ALU operation.
+- `ADDL [B, 9], 10` - 9 cycles
+  - Read instruction, read literal 10, read offset 9, add `B + 9`, read `[B+9]`,
+    read `[B+9+1]`, add, write `[B+9]`, write `[B+9+1]`.
+  - The effective address for the destination is only computed once, so we only
+    add `B+9` once.
 
 Examples:
 
@@ -328,257 +379,216 @@ Examples:
   and writing back to memory at `[B]` and `[B+1]`.
 
 
-### 0-argument Instructions
+### Nullary Instructions
 
-Opcode in the bottom 4 bits.
+Opcode in the bottom 6 bits.
 
-| Opcode | Instruction | Cycles | Details                                  |
-| :--    | :--         | :--    | :--                                      |
-| `$0`   | `NOP`       | 1      | Does nothing.                            |
-| `$1`   | `RFI`       | 4      | Returns from an interrupt handler.       |
-| `$2`   | `BRK`       | 2      | Triggers a breakpoint, in dev mode.      |
-| `$3`   | `HLT`       | 4      | Halts the CPU until an interrupt occurs. |
+```
+L0000000 00oooooo
+```
 
-
-### Branch Instructions
-
-There are unary and binary branch operations, and they can either skip the next
-non-branch instruction, or simply branch by an offset. In addition, there are
-"decrementing" versions of the unary branches.
-
-#### Unary Branches
-
-The unary operations have four conditions.
-
-| Code | Branch | Skip  | Meaning                           |
-| :--  | :--    | :--   | :--                               |
-| `$0` | `BZR`  | `IZR` | (Branch) if zero                  |
-| `$1` | `BNZ`  | `INZ` | (Branch) if nonzero               |
-| `$2` | `BPS`  | `IPS` | (Branch) if positive (signed > 0) |
-| `$3` | `BNG`  | `ING` | (Branch) if negative (signed < 0) |
-
-The "decrementing" versions (`BZRD`, `IZRD`, etc.) check the condition against
-the operand, then decrement it by 1, then branch/skip accordingly.
-
-This is helpful for writing loops. (Checking before decrementing is handy for
-loops counting down
-
-- `BZR.w [b], some_label`
-- `IZR.l [b]`
-- `BZRD.l [b], some_label`
-- `IZRD.w [b]`
-
-#### Binary Branches
-
-The binary operations have eight conditions.
-
-| Code | Branch | Skip  | Meaning                               |
-| :--  | :--    | :--   | :--                                   |
-| `$0` | `BRB`  | `IFB` | (Branch) if `b & a` is nonzero        |
-| `$1` | `BRC`  | `IFC` | (Branch) if `b & a` is zero (clear)   |
-| `$2` | `BRE`  | `IFE` | (Branch) if `b == a`                  |
-| `$3` | `BRN`  | `IFN` | (Branch) if `b != a`                  |
-| `$4` | `BRG`  | `IFG` | (Branch) if `b > a`                   |
-| `$5` | `BRA`  | `IFA` | (Branch) if `b > a`, signed ("above") |
-| `$6` | `BRL`  | `IFG` | (Branch) if `b < a`                   |
-| `$7` | `BRU`  | `IFA` | (Branch) if `b < a`, signed ("under") |
-
-All branches occupy two words at least. They all use the same format for the
-second word: `oooooooo ooAAAAAA`.
-
-That's a 10-bit signed offset, and a complex operand. It's the only argument for
-unary branches, and the right-hand argument for binary ones.
-
-The brancing flavour simply adjusts `PC` by the signed offset, and continues
-from there. The CPU lacks any branch prediction, so it loses the pipelining
-"discount" when `PC` changes.
-
-If the offset is `0`, that signals that this is the skipping flavour. Any
-further branch or skip instructions (unary or binary) are skipped at a cost of 1
-further cycle each. The next non-branch instruction is skipped, and execution
-continues after it.
-
-
-### Register Instructions
-
-| Opcode | Instruction | Cycles | Details                                     |
-| :--    | :--         | :--    | :--                                         |
-| `$0`   | `LNK`       | 2      | "Link" process for stack frames; see below. |
-| `$1`   | `ULK`       | 2      | Unlink, undoes a previous `LNK`.            |
-| `$2`   | `HWN`       | 2      | Writes the number of hardware devices.      |
-| `$3`   | `HWQ`       | 4      | Queries the hardware details, see below.    |
-
-See the section on interacting with hardware later, about `HWN` and `HWQ`.
-
-#### Link and Unlink
-
-This pair of instructions seems quite arbitrary at first glance, but they are
-designed to support C-style stack frames efficiently and concisely.
-
-`LNK`, "link", does the following:
-
-1. Decrements `SP` by 2.
-2. Stores the current value of `rrr`, the register, at the new `[SP]`.
-3. Stores this new `SP` in `rrr`.
-4. Reads a signed word from the instruction.
-5. Adds it into `SP` (making space for local variables, usually).
-
-`ULK`, "unlink", reverses this process.
-
-1. Restores the value from `rrr` to `SP`.
-2. Reads the old `rrr` value from `[SP]`.
-3. Increments `SP` by 2.
-
-There's a few important things to note here:
-
-- `rrr` becomes your "frame pointer", and you can use `SP`-relative indexing
-  based on it.
-- Don't overwrite `rrr`, or restore it first if you do.
-- Downstream function calls will save your `rrr` for you if they also use `LNK`.
-- Since the old `SP` is saved, you don't need to pop any other values pushed
-  to the stack in the meantime.
+| Opcode | Mnemonic | Cycles | Details                                          |
+| :--    | :--      | :--    | :--                                              |
+| `$0`   | `NOP`    | 1      | Does nothing (NB: `NOP` is `$0000`)              |
+| `$1`   | `RFI`    | 4      | Returns from an interrupt handler                |
+| `$2`   | `BRK`    | 2      | Triggers a breakpoint, in dev mode               |
+| `$3`   | `HLT`    | 4      | Halts the CPU until an interrupt occurs          |
+| `$4`   | `ULK`    | 2      | C-style frame pointer pop; see `LNK` for details |
 
 
 ### Unary Instructions
 
-There are four types of instructions which have one complex operand. They all
-have the shape `0000ffoo oLAAAAAA`, where `ff` is the "family" of operations,
-`ooo` is the specific operation, `L` is the word/longword flag, and `AAAAAA` is
-the operand.
+Opcode in bits 11:6, operand in the bottom 6:
 
-#### Family 0: Immediate arithmetic
+```
+L000oooo ooaaaaaa
+```
 
-Five key arithmetic operations have "immediate" versions, that allow adding an
-inline literal (following the instruction) to the addressed operand. Most of
-these operations are commutative; for `SUB` the computation is
-`operand - immediate`.
+| Opcode | Mnemonic | Cycles | Details                                                                           |
+| :--    | :--      | :--    | :--                                                                               |
+| `$01`  | `SWP`    | 1      | Swap low and high words of 32-bit op (`L` ignored)                                |
+| `$02`  | `PEA`    | 1      | Push effective address of operand to stack                                        |
+| `$03`  | `NOT`    | 1      | Bitwise negation, swap all bits                                                   |
+| `$04`  | `NEG`    | 1      | 2's complement signed negation                                                    |
+| `$05`  | `JSR`    | 1      | Push 32-bit `PC`, `PC := a`                                                       |
+| `$06`  | `LOG`    | 2      | Emit operand to the debug logging console                                         |
+| `$07`  | `LNK`    | 2      | C-style stack frame helper, see below                                             |
+| `$08`  |          |        |                                                                                   |
+| `$09`  | `HWN`    | 2      | Set `a` to the number of connected devices                                        |
+| `$0a`  | `HWQ`    | 4      | Queries device `a`; sets `A` to device ID, `X` to manufacturer ID, `C` to version |
+| `$0b`  | `HWI`    | 4      | Sends a hardware interrupt to device `a`                                          |
+| `$0c`  | `INT`    | 4      | Software interrupt with message `a` added to the queue                            |
+| `$0d`  | `IAQ`    | 1      | Interrupt queueing on if `a != 0`, off if `a == 0`                                |
+| `$0e`  | `EXT`    | 2      | Sign-extend the low word of `a` to make a signed 32-bit value (unchanged if `!L`) |
+| `$0f`  | `CLR`    | 0      | Clears (ie. sets to 0) the operand                                                |
+| `$10`  | `PSH`    | 1      | Push registers based on bitmap argument (see below)                               |
+| `$11`  | `POP`    | 1      | Pop registers based on bitmap argument (see below)                                |
+| `$20`  | `BZR`    | 2/3    | Branch if zero                                                                    |
+| `$21`  | `BNZ`    | 2/3    | Branch if not zero                                                                |
+| `$22`  | `BPS`    | 2/3    | Branch if positive (signed > 0)                                                   |
+| `$23`  | `BNG`    | 2/3    | Branch if negative (signed < 0)                                                   |
+| `$24`  | `BZRD`   | 3/4    | Branch if zero, with decrement                                                    |
+| `$25`  | `BNZD`   | 3/4    | Branch if not zero, with decrement                                                |
+| `$26`  | `BPSD`   | 3/4    | Branch if positive (signed > 0), with decrement                                   |
+| `$27`  | `BNGD`   | 3/4    | Branch if negative (signed < 0), with decrement                                   |
 
-Either way the immediate value comes before and extra words for the operand.
+See below for more details on `LNK` (and `ULK`), `PSH` and `POP`, and the
+branches.
 
-If `L` is set, reads a longword from the instruction and does 32-bit arithmetic.
-If `L` is clear, reads a word and does 16-bit arithmetic.
+#### Push and Pop
 
-| Opcode | Instruction | Cycles | Details                                 |
-| :--    | :--         | :--    | :--                                     |
-| `$0`   | (none)      | -      | Placeholder for the Reg type above.     |
-| `$1`   | `ADD`       | 1      | Adds immediate value to operand.        |
-| `$2`   | `SUB`       | 1      | Subtracts immediate vaule from operand. |
-| `$3`   | `AND`       | 1      | Bitwise AND.                            |
-| `$4`   | `BOR`       | 1      | Bitwise inclusive OR.                   |
-| `$5`   | `XOR`       | 1      | Bitwise exclusive OR.                   |
-| `$6`   | (reserved)  | -      | Reserved for future use.                |
-| `$7`   | (reserved)  | -      | Reserved for future use.                |
+These instructions, borrowed from the ARM family, push and pop several registers
+from the stack in sequence. All the general purpose registers, `EX` and `PC` are
+eligible for pushing this way; and in that order.
 
-#### Family 1: Bit twiddling
+The unary argument is interpreted as `000000PE JIZYXBCA`, where `E` is the `EX`
+bit, `P` the `PC` bit. Those registers with bits set are the ones pushed and
+popped.
 
-Each of these operations reads a word-sized immediate value, regardless of `L`.
+That is, `A` is at the lowest address, then `B`, etc. `PC` is always at the
+highest address. That enables function calls with `JSR` to be bracketed like this:
 
-The "register" operations expect a register number in the low 3 bits of that
-word; the "immediate" ones expect an unsigned word literal.
+```
+PSHW {X, Y, A}
+; ...
+POPW {A, X, Y, PC}
+```
 
-Either the register or the immediate gives the bit number for the operation. If
-`L` is set, the bit number is interpreted modulo 32; if `L` is clear, modulo 16.
+Note that the order of arguments in the list is ignored. Note also that the size
+bit, eg. `PSHW` vs. `PSHL`, refers only to the operand, not to the registers.
+This operation always pushes and pops whole, 32-bit register values.
 
-These all require 1 cycle.
-
-| Opcode | Mnemonic | Bit Number | Details                                           |
-| :--    | :--      | :--        | :--                                               |
-| `$0`   | `BTX`    | Immediate  | Toggles the specified bit (`X` for `XOR`)         |
-| `$1`   | `BTS`    | Immediate  | Sets the specified bit ("bit set")                |
-| `$2`   | `BTC`    | Immediate  | Clears the specified bit ("bit clear")            |
-| `$3`   | `BTM`    | Immediate  | Clears the whole operand, so only this bit is set |
-| `$4`   | `BTX`    | Register   | As above.                                         |
-| `$5`   | `BTS`    | Register   | As above.                                         |
-| `$6`   | `BTC`    | Register   | As above.                                         |
-| `$7`   | `BTM`    | Register   | As above. ("bit mask")                            |
-
-
-#### Family 2: Other unary operations
-
-Most of these use the `L` bit normally, but a few don't need it, since their
-size is implied by their operation.
-
-| Opcode | `L` | Operation | Details                                                 |
-| :--    | :-- | :--       | :--                                                     |
-| `$0`   | `0` | `SWP`     | Swaps the low and high words of operand                 |
-| `$0`   | `1` | `PEA`     | Pushes effective address of operand to stack            |
-| `$1`   | `0` | `EXT`     | Sign-extends the low word of operand to 32 bits         |
-| `$1`   | `1` | `INT`     | Triggers a software interrupt with operand message      |
-| `$2`   | `L` | `NOT`     | Bitwise negation - reverse all bits                     |
-| `$3`   | `L` | `NEG`     | 2's complement negation                                 |
-| `$4`   | `L` | `JSR`     | Jump to subroutine - push `PC`, then `PC := operand`    |
-| `$5`   | `L` | `IAQ`     | Interrupt queueing bit `:= operand == 0`                |
-| `$6`   | `L` | `LOG`     | Log the operand's value to any relevant debug system    |
-| `$7`   | `L` | `HWI`     | Send hardware interrupt for the device number `operand` |
-
-The implied sizes are:
-
-- `SWP`: Longword, so it has two words to swap.
-- `PEA`: Doesn't actually read the operand; pushes 32-bit effective address.
-- `EXT`: Expects a 32-bit operand, ignores its high word and sign-extends the low word.
-- `INT`: Reads just a word, since that's the size of interrupt messages.
-  - **NB**: If you do `INT [some_longword_var]`, it'll read the high word!
-
-#### Family 3: Binary branches
-
-Branch instructions are discussed in more detail above; this is where they fall
-in the instruction encoding.
+Costs 1 cycle by default, though the runtime is dominated by reading or writing
+to the stack.
 
 
-### `SET` instructions
+#### LNK and ULK
 
-Set instructions are encoded as: `001LBBBB BBAAAAAA`. That is, if the high
-nybble is `0010`, the instruction is a `SET.w`. If `0011`, `SET.l`.
+This pair of instructions is designed to make C-style frame pointers easy and
+efficient. They use `J` as the frame pointer, as follows:
 
-The destination operand is `BBBBBB`, the source is `AAAAAA`. Remember that the
-source is processed first, and its extra immediate values (if any) come first.
+`LNK a`, "link", does the following:
 
-The source operand is fully processed and the value read, before the effective
-address is computed and written for the destination. That can be relevant if
-the operands depend on values that are changing as the instruction is processed,
-such as `PC` or `SP`.
+1. Decrements `SP` by 2.
+2. Stores the current (32-bit) value of `J`, the frame pointer, at the new `[SP]`.
+3. Stores this new `SP` in `J`.
+4. Reads the operand `a`, as a signed offset (`L` gives size).
+5. Adds it to `SP` (making space for local variables, usually).
 
+`ULK`, "unlink", reverses this process.
 
-### Binary instructions
+1. Restores the value from `J` to `SP`.
+2. Reads the old `J` value from `[SP]`.
+3. Increments `SP` by 2.
 
-This family of instructions all have the form: `ooooorrr DLAAAAAA`. `ooooo` is
-the 5-bit opcode, `rrr` the register operand's number, `D` the "destination" bit,
-`L` the common longword bit, and `AAAAAA` the complex operand.
+There's a few important things to note here:
 
-If `D` is set, the complex operation is the destination, and the register the
-source. If `D` is clear, the complex operand is the source.
+- `J` becomes your "frame pointer", and you can use `[J - 2]` style indexing
+  based on it.
+- Don't overwrite `J`, or restore it first if you do.
+- Your calling convention should probably make `J` callee-saved.
+  - Then `LNK` and `ULK` take care of saving the old `J` for you.
+  - And any downstream function calls will save/restore your `J` value (whether
+    they use `LNK`/`ULK` or not).
+- Since the old `SP` is saved, you don't need to pop any other values pushed
+  to the stack in the meantime. `ULK` implicitly pops them all by loading the old
+  `SP`.
 
-Note that for non-commutative operations (eg. `SUB`, `DIV`) the destination is
-the left operand and source the right.
+#### Unary Branches
 
-Note that opcode `00000` is a placeholder for all the unary, register, and
-nullary ops described above. `0001x` is reserved for future use. `001xx` are the
-`SET` opcodes above. The binary operations currently run from `01000` to `10101`.
+These branch (ie. conditionally jump to nearby addresses) based on the value of
+`a`. The next word in the instruction gives a signed 16-bit offset, relative to
+`PC` after reading that offset word.
 
-| Opcode  | Instruction | Cycles | Notes                                          |
-| :--     | :--         | :--    | :--                                            |
-| `00000` | (reserved)  | -      | Unary, register and nullary operations.        |
-| `0001x` | (reserved)  | -      | Reserved for future expansion.                 |
-| `001xx` | `SET`       | -      | See above.                                     |
-| `01000` | `ADD`       | 1      | `dst := dst + src`, `EX := 1` if carry         |
-| `01001` | `ADX`       | 2      | `dst := dst + src + EX`, `EX := 1` if carry    |
-| `01010` | `SUB`       | 1      | `dst := dst - src`, `EX := -1` if borrow       |
-| `01011` | `SBX`       | 2      | `dst := dst - src + EX`, `EX := -1` if borrow  |
-| `01100` | `MUL`       | 4/8    | `EX:dst := dst * src` unsigned multiply        |
-| `01101` | `MLI`       | 4/8    | `dst := dst * src` signed multiply             |
-| `01110` | `DIV`       | 12/18  | `dst := dst / src`, `EX := dst % src` unsigned |
-| `01111` | `DVI`       | 12/18  | `dst := dst / src`, `EX := dst % src` signed   |
-| `10000` | `AND`       | 1      | `dst := dst & src`                             |
-| `10001` | `BOR`       | 1      | `dst := dst OR src`                            |
-| `10010` | `XOR`       | 1      | `dst := dst ^ src`                             |
-| `10011` | `SHR`       | 1      | `dst:EX := dst >> src` shifting in 0s          |
-| `10100` | `ASR`       | 1      | `dst:EX := dst >>> src` preserving top bit     |
-| `10101` | `SHL`       | 1      | `EX:dst := dst << src`                         |
+The "decrementing" versions (`BNZD` etc.) check the condition first, and only
+decrement `a` if the condition succeeds. This is very handy for loops that count
+down a length.
 
-For the shifts, the bits shifted out go into `EX`. Right shifts push the bits
-into the top bits of `EX`; treating `EX` here as 32-bit. For left shifts, `EX`
-gets the bits shifted out of the (16- or 32-bit) result in its low bits.
+Note that the branches take 1 more cycle on failure (ie. not branching) than on
+branching, due to breaking the pipeline.
 
+### Binary Instructions
+
+These come in two forms: short and long. The most commonly used ALU operations
+(`SET`, `ADD`, `SUB`, `AND`, `BOR`, `XOR`) are available in short form, which
+helps keep this ubiquitous operations fast and compact.
+
+Long form uses a second opcode word following the first.
+
+#### Short Form Instructions
+
+| Opcode | Mnemonic | Cycles | Details                                         |
+| :--    | :--      | :--    | :--                                             |
+| `$0`   |          |        | Placeholder, for the unary ops                  |
+| `$1`   | `SET`    | 1      | Set `b` to `a`                                  |
+| `$2`   | `ADD`    | 2      | `b := b + a`, `EX := 1` if carry, 0 otherwise   |
+| `$3`   | `SUB`    | 2      | `b := b - a`, `EX := -1` if borrow, 0 otherwise |
+| `$4`   | `AND`    | 1      | `b := b & a`                                    |
+| `$5`   | `BOR`    | 1      | `b := b OR a`                                   |
+| `$6`   | `XOR`    | 1      | `b := b ^ a`                                    |
+| `$7`   |          |        | Long form, see below                            |
+
+#### Long Form Instructions
+
+These have an extra word, where the low 5 bits is the opcode: `ssssssss sssooooo`.
+
+The other 11 bits is reserved (all 0s for future expansion), except for the
+`IFx`/`BRx` branch instructions, where it's the branch offset (more below).
+
+| Opcode | Mnemonic | Cycles | Details                                             |
+| :--    | :--      | :--    | :--                                                 |
+| `$00`  | `ADX`    | 3      | `b := b + a + EX`, `EX` set as `ADD`                |
+| `$01`  | `SBX`    | 3      | `b := b - a + EX`, `EX` set as `SUB`                |
+| `$02`  | `SHR`    | 2      | `b:EX := b >> a`, shifting in 0s                    |
+| `$03`  | `ASR`    | 2      | `b:EX := b >> a`, preserving top bit                |
+| `$04`  | `SHL`    | 2      | `EX:b := b << a`, shifting in 0s                    |
+| `$05`  | `MUL`    | 4/8    | `EX:b := b * a`, unsigned multiply                  |
+| `$06`  | `MLI`    | 4/8    | `b := b * a`, signed multiply (`EX` unchanged)      |
+| `$07`  | `DIV`    | 12/18  | `b := b / a`, `EX := b % a`, unsigned               |
+| `$08`  | `DVI`    | 12/18  | `b := b / a`, `EX := b % a`, signed                 |
+| `$09`  | `LEA`    | 1      | Set `b` to the effective address of `a` (see below) |
+| `$0a`  | `BTX`    | 1      | Toggle bit `a` in `b`                               |
+| `$0b`  | `BTS`    | 1      | Set bit `a` in `b`                                  |
+| `$0c`  | `BTC`    | 1      | Clear bit `a` in `b`                                |
+| `$0d`  | `BTM`    | 1      | Set `b` to a bit mask with only bit `a` set         |
+| `$0e`  |          |        |                                                     |
+| `$0f`  |          |        |                                                     |
+
+| Opcode | Branch | If    | Details                                            |
+| :--    | :--    | :--   | :--                                                |
+| `$10`  | `BRB`  | `IFB` | Branch/run next if `b & a != 0` ("Bits set")       |
+| `$11`  | `BRC`  | `IFC` | Branch/run next if `b & a == 0` ("bits Clear")     |
+| `$12`  | `BRE`  | `IFE` | Branch/run next if `b == a` ("Equal")              |
+| `$13`  | `BRN`  | `IFN` | Branch/run next if `b != a` ("Not equal")          |
+| `$14`  | `BRG`  | `IFG` | Branch/run next if `b > a`, unsigned ("Greater")   |
+| `$15`  | `BRA`  | `IFA` | Branch/run next if `b > a`, signed ("Above")       |
+| `$16`  | `BRL`  | `IFL` | Branch/run next if `b < a`, unsigned ("Less than") |
+| `$17`  | `BRU`  | `IFU` | Branch/run next if `b < a`, signed ("Under")       |
+
+All the branches take 2 cycles on success, 3 on failure. They treat the upper 11
+bits of the long form word as a signed 11-bit offset, relative to the `PC` after
+reading the long form word.
+
+If that offset is -1 (all bits set), the instruction is interpreted as a DCPU-16
+style `IFx` instruction. If the condition is true, the next instruction is
+executed. If the condition is false, the next instruction is skipped.
+
+When "skipping" thus, any further branches (unary or binary) are also skipped,
+so only the next "real" instruction is executed. This is a good way to encode
+"and" conditions:
+
+```
+IFG A, 7
+  IFL A, 19
+    SET PC, somewhere
+```
+
+or equivalently, and more compactly:
+
+```
+IFG A, 7
+  BRL A, 19, somewhere
+```
 
 #### Multiplying
 
@@ -630,42 +640,31 @@ that the quotient is positive **iff** the signs of the operands match.
 
 ### Load Effective Address
 
-Sometimes would want to do something complex to memory at the location of an
-operand. Perhaps multi-word arithmetic, or accessing a structure. Rather than
-forcing the programming to duplicate logic that's already built into the CPU, or
-to repeatedly specify expensive indexing operands, you can use `LEA`.
+The instructions `PEA` and `LEA` take an operand, but rather than actually
+accessing its value, they capture the "effective address" of that operand. See
+the section on Operands, and "Concept: Effective Address" above.
 
-Memory operands have an "effective address" (see above) which they compute,
-and then use for both reading and writing that operand as needed.
+- `SETL C, operand` puts the *value* of the operand into `C`.
+- `LEAL C, operand` puts the *effective address itself* into C.
 
-`SET.w C, operand` loads the **value** at that effective address into `C`.
-`LEA C, operand` loads the **effective address itself** into `C`.
-
-Put another way, these two sequences have the same result:
+Put another way, `SETW C, operand` is equivalent to
 
 ```
-SET.w C, operand
+LEAL C, operand
+SETW C, [C]
 ```
 
-```
-LEA C, operand
-SET.w C, [C]
-```
-
-(Of course, if that's all you meant to do there's no need to use `LEA`.)
-
-
-`LEA` is encoded as `11000rrr 00AAAAAA`, which resembles a binary operation but
-is missing the `L` and `D` bits. They aren't required here - the effective
-address is always 32 bits, and the operand is always the source.
-
+(Though it's pointless to write it that way; this is just an illustration.)
 
 Note that if the operand passed to `LEA` and `PEA` has side effects, such as
 adjusting the stack pointer, these effects **do not** happen. The only effect is
 to load the address they would operate on into the register.
 
-For example `LEA C, POP` copies the effective address (`SP`) into `C` without
+For example `LEAL C, POP` copies the effective address (`SP`) into `C` without
 changing `SP`.
+
+Finally, note that `LEAW` is perfectly valid. It loads the low word of the
+effective address into the destination's low word.
 
 ### Reserved areas
 
