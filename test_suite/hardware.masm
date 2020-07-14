@@ -47,7 +47,6 @@ jsrw _search_dev_table
 setl pc, init_hardware_loop
 
 :init_hardware_loop_end
-logl _device_ids
 popw {x, pc}
 
 

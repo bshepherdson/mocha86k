@@ -52,12 +52,27 @@ jsrl init_display
 setw [color], bg_blue | fg_white
 jsrl print_pc
 .dat "Mocha 86k EMULATOR TEST", 0
-addl [cursor], 32 ; Leave a blank line.
+setl [cursor], vram+64 ; Leave a blank line.
 
-; Testing
-setw [test], 17
-jsrl fail
-; Done testing
+; Running the various test suites!
+jsrl test_suite_addressing
+jsrl test_suite_interrupts
+jsrl test_suite_math
+
+
+; Testing completed successfully!
+setw [color], fg_blue | bg_white
+clrl a
+setw a, [test_count]
+jsrl print_number
+jsrl print_pc
+.dat " tests passed", 0
+setl pc, spin
+
+
+.include "test_addressing.masm"
+.include "test_interrupts.masm"
+.include "test_math.masm"
 
 :spin
 setl pc, spin

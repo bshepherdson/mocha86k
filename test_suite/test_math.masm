@@ -1,0 +1,265 @@
+:test_suite_math
+jsrl test_add
+jsrl test_sub
+jsrl test_unsigned_multiplication
+jsrl test_signed_multiplication
+jsrl test_unsigned_division
+jsrl test_signed_division
+jsrl test_shifts
+setl pc, pop
+
+
+; fail itself is too far away, so we trampoline through here.
+:fail_math
+setl pc, fail
+
+
+:test_add
+mktest T_add_word_basics, 300
+clrl a
+setw a, 9
+addw a, 3
+
+brnw a, 12, fail_math
+brnw ex, 0, fail_math
+
+mktest T_add_long_basics, 301
+setl a, 650243
+addl a, 90241
+brnl a, 740484, fail_math
+brnl ex, 0, fail_math
+
+mktest T_add_word_negative, 302
+setw a, 9
+addw a, -4
+brnw a, 5, fail_math
+brnl ex, 1, fail_math ; This is unsigned overflow, effectively.
+
+mktest T_add_long_negative, 303
+setl a, 9
+addl a, -4
+brnl a, 5, fail_math
+brnl ex, 1, fail_math ; This is unsigned overflow, effectively.
+
+setl pc, pop
+
+:test_sub
+mktest T_sub_word_basics, 304
+setw a, 9
+subw a, 3
+brnw a, 6, fail_math
+brnw ex, 0, fail_math
+
+mktest T_sub_long_basics, 305
+setl a, 9
+subl a, 3
+brnl a, 6, fail_math
+brnl ex, 0, fail_math
+
+mktest T_sub_word_overflow, 306
+setw a, 9
+subw a, 12 ; Underflows
+brnw a, -3, fail_math
+brnl ex, -1, fail_math
+
+mktest T_sub_long_overflow, 307
+setl a, 9
+subl a, 12 ; Underflows
+brnl a, -3, fail_math
+brnl ex, -1, fail_math
+
+setl pc, pop
+
+
+:test_unsigned_multiplication
+mktest T_mul_word_basics, 308
+setw a, 9
+mulw a, 6 ; A = 54, EX = 0
+brnw a, 54, fail_math
+brnw ex, 0, fail_math
+
+mktest T_mul_long_basics, 308
+setl a, 9
+mull a, 6 ; A = 54, EX = 0
+brnl a, 54, fail_math
+brnl ex, 0, fail_math
+
+mktest T_mul_word_big, 309
+setw a, 780
+mulw a, 1357 ; 780 * 1357 = 1,058,460 = 0x10269c
+
+brnw a, 0x269c, fail_math
+brnw ex, 0x10, fail_math
+
+mktest T_mul_long_big, 310
+setl a, 689144
+mull a, 192407 ; = 1,325,966,129,608 = 0x1e_df58_5f48
+brnl a, 0xdf585f48, fail_math
+brnl ex, 0x1e, fail_math
+
+setl pc, pop
+
+
+:test_signed_multiplication
+mktest T_mli_word_basics, 320
+setw a, 6
+mliw a, 4
+brnw a, 24, fail_math
+
+mktest T_mli_long_basics, 321
+setl a, 6
+mlil a, 4
+brnl a, 24, fail_math
+
+mktest T_mli_word_np, 322
+setw a, -6
+mliw a, 4
+brnw a, -24, fail_math
+mktest T_mli_long_np, 323
+setl a, -6
+mlil a, 4
+brnl a, -24, fail_math
+
+mktest T_mli_word_pn, 324
+setw a, 6
+mliw a, -4
+brnw a, -24, fail_math
+mktest T_mli_long_pn, 325
+setl a, 6
+mlil a, -4
+brnl a, -24, fail_math
+
+mktest T_mli_word_nn, 326
+setw a, -6
+mliw a, -4
+brnw a, 24, fail_math
+mktest T_mli_long_nn, 327
+setl a, -6
+mlil a, -4
+brnl a, 24, fail_math
+
+mktest T_mli_word_big_pp, 328
+setw a, 12548
+mliw a, 290 ; 12548 * 290 = 3,638,920 = 0x378688
+brnw a, 0x8688, fail_math
+mktest T_mli_long_big_pp, 329
+setl a, 132548
+mlil a, 290469 ; 132548 * 290469 = 38,501,085,012 = 0x8_f6d7_ef54
+brnl a, 0xf6d7ef54, fail_math
+
+setl pc, pop
+
+
+:test_unsigned_division
+mktest T_div_word_basics, 340
+setw a, 56
+divw a, 9
+brnw a, 6, fail_math
+brnw ex, 2, fail_math
+mktest T_div_long_basics, 341
+setl a, 56
+divl a, 9
+brnl a, 6, fail_math
+brnl ex, 2, fail_math
+
+mktest T_div_word_by_0, 342
+setw a, 54
+divw a, 0
+brnw a, 0, fail_math
+brnw ex, 0, fail_math
+mktest T_div_long_by_0, 343
+setl a, 54
+divl a, 0
+brnl a, 0, fail_math
+brnl ex, 0, fail_math
+
+mktest T_div_word_big, 344
+setw a, 52087
+divw a, 116 ; 52087 / 116 = 449 R 3
+brnw a, 449, fail_math
+brnw ex, 3, fail_math
+mktest T_div_long_big, 345
+setl a, 520878328
+divl a, 11624 ; = 44,810 R 6888
+brnl a, 44810, fail_math
+brnl ex, 6888, fail_math
+
+setl pc, pop
+
+
+; This one gets special attention, since it's relatively involved.
+:test_signed_division
+mktest T_dvi_word_neg_pos, 350
+setw a, -7
+dviw a, 2
+brnw a, -3, fail_math
+brnw ex, -1, fail_math
+mktest T_dvi_long_neg_pos, 351
+setl a, -7
+dvil a, 2
+brnl a, -3, fail_math
+brnl ex, -1, fail_math
+
+mktest T_dvi_word_pos_neg, 352
+setw a, 7
+dviw a, -2
+brnw a, -3, fail_math
+brnw ex, 1, fail_math
+mktest T_dvi_long_pos_neg, 353
+setl a, 7
+dvil a, -2
+brnl a, -3, fail_math
+brnl ex, 1, fail_math
+
+mktest T_dvi_word_neg_neg, 354
+setw a, -7
+dviw a, -2
+brnw a, 3, fail_math
+brnw ex, -1, fail_math
+mktest T_dvi_long_neg_neg, 355
+setl a, -7
+dvil a, -2
+brnl a, 3, fail_math
+brnl ex, -1, fail_math
+
+setl pc, pop
+
+
+:test_shifts
+mktest T_shr_word_basics, 370
+setw a, 0xcf89
+shrw a, 9 ; 0x67:c480
+brnw a, 0x67, fail_math
+brnw ex, 0xc480, fail_math
+mktest T_shr_long_basics, 371
+setl a, 0xcf891893
+shrl a, 9 ; 0x67c48c : 49800000
+brnl a, 0x67c48c, fail_math
+brnl ex, 0x49800000, fail_math
+
+mktest T_asr_word_basics, 372
+setw a, 0xcf89
+asrw a, 9 ; 0xffe7:c480
+brnw a, 0xffe7, fail_math
+brnw ex, 0xc480, fail_math
+mktest T_asr_long_basics, 373
+setl a, 0xcf891893  ; ffff ffff 1110 0111 1100 0100 1000 1100 0100 1001 1000 0000
+asrl a, 9 ; 0xffe7c48c : 49800000
+brnl a, 0xffe7c48c, fail_math
+brnl ex, 0x49800000, fail_math
+
+mktest T_shl_word_basics, 374
+setw a, 0xcf89
+shlw a, 9
+brnw a, 0x1200, fail_math
+brnw ex, 0x019f, fail_math
+mktest T_shl_long_basics, 375
+setl a, 0xcf893617 ; 1 1001 1111   0001 0010 0110 1100 0010 1110 0000 0000
+shll a, 9
+brnl ex, 0x19f, fail_math
+brnl a, 0x126c2e00, fail_math
+
+; TODO Test "long" shifts, ones that are longer than 16 or 32 bits.
+
+setl pc, pop
+

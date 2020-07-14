@@ -1,0 +1,79 @@
+:test_suite_interrupts
+; First check if we found the timer device.
+setl a, dev_timer
+jsrl get_device ; -1 on failure
+
+brew a, -1, no_timer
+setw [timer], a
+
+; We did find a timer, so set it up.
+mktest T_int_ia_words, 200
+iaqw 1 ; Disable interrupts
+setw ia, interrupt_handler
+
+clrl a
+setw a, ia
+brnw a, interrupt_handler, fail
+
+; Now configure the timer to tick at 60Hz, and interrupt with message 6.
+mktest T_interrupts_happen, 201
+setw a, 2 ; SET_INT
+setw b, 6 ; message
+hwiw [timer]
+
+; Clear the tick counter.
+setw a, 1 ; GET_TICKS
+hwiw [timer]
+
+; And set the pace.
+setw a, 0 ; SET_SPEED
+setw b, 1 ; 60Hz
+hwiw [timer]
+
+setw [expected_message], 6
+
+iaqw 0 ; Enable interrupts again.
+
+setl a, 200000
+:wait_loop
+bnzdl a, wait_loop
+
+; Disable the timer again
+setw a, 0
+setw b, 0
+hwiw [timer]
+
+brew [interrupt_count], 0, fail
+
+setw a, 1 ; GET_TICKS
+hwiw [timer] ; C is the tick count.
+brew c, 0, fail
+
+setw [color], fg_blue|bg_white
+clrl a
+setw a, [interrupt_count]
+jsrl print_number
+jsrl print_pc
+.dat " timer interrupts", 0
+addl [cursor], 31
+andl [cursor], ~31
+
+setl pc, pop
+
+
+
+:timer .dat -1
+:interrupt_count .dat 0
+:expected_message .dat 0
+
+:interrupt_handler
+brnw a, [expected_message], fail
+addw [interrupt_count], 1
+rfi
+
+:no_timer
+setw [color], fg_yellow | bg_white
+jsrl print_pc
+;     0123456789abcdef0123456789abcdef
+.dat "No timer. Interrupt test skipped", 0
+setl pc, pop

@@ -1,0 +1,243 @@
+; Tests for the various addressing modes
+; This tests things like that setw a, [b]+ advances b by 1, while setl would
+; advance it by 2.
+
+:addressing_data .dat 1, 2, 3, 4, 5, 6, 7, 8
+:addressing_data_end
+
+:fail_addr
+setl pc, fail
+
+:test_suite_addressing
+jsrl test_postincrement
+jsrl test_predecrement
+jsrl test_reg_offset
+jsrl test_reg_index
+jsrl test_peek
+jsrl test_absolute
+jsrl test_sp_relative
+jsrl test_sp_messy
+setl pc, pop
+
+:test_postincrement
+mktest T_am_postincrement_read_word, 100
+setl b, addressing_data
+clrl a
+setw a, [b]+
+brnl a, 1, fail_addr
+brnl b, addressing_data+1, fail_addr
+
+mktest T_am_postincrement_read_longword, 101
+setl b, addressing_data
+setl a, [b]+
+brnl a, 0x10002, fail_addr
+brnl b, addressing_data+2, fail_addr
+
+setl pc, pop
+
+:test_predecrement
+mktest T_am_predecrement_read_word, 102
+setl b, addressing_data_end
+clrl a
+setw a, -[b]
+brnl a, 8, fail_addr
+brnl b, addressing_data_end-1, fail_addr
+
+mktest T_predecrement_read_longword, 103
+setl b, addressing_data_end
+setl a, -[b]
+brnl a, 0x70008, fail_addr
+brnl b, addressing_data_end-2, fail_addr
+
+setl pc, pop
+
+:test_reg_offset
+mktest T_am_reg_offset_word, 104
+setl b, addressing_data
+setw a, [b + 4]
+brnw a, 5, fail_addr
+brnl b, addressing_data, fail_addr ; Doesn't move
+
+mktest T_am_reg_offset_long, 105
+setl b, addressing_data
+setl a, [b + 2]
+brnl a, 0x30004, fail_addr
+brnl b, addressing_data, fail_addr ; Doesn't move
+
+setl pc, pop
+
+:test_reg_index
+mktest T_am_reg_index_word, 106
+setl b, addressing_data
+setl c, 3
+setw a, [b, c]
+brnw a, 4, fail_addr
+
+addl c, 2
+setw a, [b, c]
+brnw a, 6, fail_addr
+
+mktest T_am_reg_index_word, 107
+setl a, [b, c]
+brnl a, 0x60007, fail_addr
+
+brnl b, addressing_data, fail_addr ; Doesn't move
+setl pc, pop
+
+
+:test_peek
+mktest T_am_peek_word, 108
+setw push, 17
+setl b, sp
+brnw peek, 17, fail_addr ; Reads correctly
+setw peek, 19            ; Writes correctly
+brnw peek, 19, fail_addr ; Reads correctly
+brnl b, sp, fail_addr    ; SP unchanged
+setw a, pop
+brnw a, 19, fail_addr    ; Popped value properly.
+
+mktest T_am_peek_long, 109
+setl push, 0xdeadbeef
+setl b, sp
+brnl peek, 0xdeadbeef, fail_addr ; Reads correctly
+setl peek, 0xcafeabba            ; Writes correctly
+brnl peek, 0xcafeabba, fail_addr ; Reads correctly
+brnl b, sp, fail_addr            ; SP unchanged
+setl a, pop
+brnl a, 0xcafeabba, fail_addr    ; Popped value properly.
+
+setl pc, pop
+
+
+:absolute_field .dat 0xcafe, 0xbeef
+.def high_address, 0x18000
+
+:test_absolute
+setl a, high_address ; A 32-bit address somewhere unused.
+setl [a], 0xdeadabba
+
+; Now, some permutations.
+mktest T_am_abs_word_word, 110
+setw a, [absolute_field]
+brnw a, 0xcafe, fail_addr
+
+mktest T_am_abs_word_long, 111
+:T_am_abs_word_long_pre
+setl a, [absolute_field] ; Read a long from a word address.
+:T_am_abs_word_long_post
+brnl a, 0xcafebeef, fail_addr
+
+; Instruction is 2 words.
+brnw 2, T_am_abs_word_long_post - T_am_abs_word_long_pre, fail_addr
+
+mktest T_am_abs_long_word, 112
+:T_am_abs_long_word_pre
+setw a, [high_address]  ; Read a word from a long address.
+:T_am_abs_long_word_post
+brnw a, 0xdead, fail_addr
+
+; Instruction is 3 words.
+brnw 3, T_am_abs_long_word_post - T_am_abs_long_word_pre, fail_addr
+
+mktest T_am_abs_long_long, 113
+setl a, [high_address]
+brnl a, 0xdeadabba, fail_addr
+
+setl pc, pop
+
+; Immediate words and longwords have been thoroughly tested implicitly, now.
+
+
+:test_sp_relative
+setl push, 0xcafedead
+setl push, 0xabbabeef ; Alphabetical from TOS: abba, beef, cafe, dead.
+
+mktest T_am_sp_relative, 114
+brnw peek, 0xabba, fail_addr
+brnl peek, 0xabbabeef, fail_addr
+
+brnw [sp+0], 0xabba, fail_addr
+brnw [sp+1], 0xbeef, fail_addr
+brnw [sp+2], 0xcafe, fail_addr
+brnw [sp+3], 0xdead, fail_addr
+brnl [sp+0], 0xabbabeef, fail_addr
+brnl [sp+1], 0xbeefcafe, fail_addr
+brnl [sp+2], 0xcafedead, fail_addr
+addl sp, 4
+setl pc, pop
+
+; TODO Test PC-relative. It's of questionable utility without `$` in the
+; assembler, since otherwise it's mostly a test of my mental arithmetic.
+
+:test_sp_messy
+mktest T_am_push_sp, 115
+setl a, sp
+setl push, sp ; Should read the old PC, then push it.
+brnl peek, a, fail_addr
+setl b, pop
+brnl a, b, fail_addr
+brnl sp, b, fail_addr
+
+mktest T_am_add_push_word, 116
+setl a, sp
+setl b, a
+subl b, 1  ; A is original SP, B is SP with push active.
+
+setw push, 127
+brnl b, sp, fail_addr
+addw push, 6
+brnl b, sp, fail_addr
+brnw pop, 133, fail_addr
+brnl a, sp, fail_addr
+
+mktest T_am_add_push_long, 117
+setl a, sp
+setl b, a
+subl b, 2  ; A is original SP, B is SP with push active.
+
+setl push, 0x12345
+brnl b, sp, fail_addr
+addl push, 6
+brnl b, sp, fail_addr
+brnl pop, 0x1234b, fail_addr
+brnl a, sp, fail_addr
+
+mktest T_am_push_pop_word, 118
+; Combining push and pop on eg. ADD combines the top two values, leaving one.
+setl a, sp
+setl b, a
+subl b, 2   ; A is base SP, B is expected in the middle.
+
+setw push, 6
+setw push, 7
+brnl sp, b, fail_addr
+addw push, pop ; Combined on top.
+
+addl b, 1
+brnl sp, b, fail_addr
+
+brnw pop, 13, fail_addr ; The combined result.
+
+brnl a, sp, fail_addr   ; SP restored to original.
+
+mktest T_am_push_pop_long, 110
+; Combining push and pop on eg. ADD combines the top two values, leaving one.
+setl a, sp
+setl b, a
+subl b, 4   ; A is base SP, B is expected in the middle.
+
+setl push, 6
+setl push, 7
+brnl sp, b, fail_addr
+addl push, pop ; Combined on top.
+
+addl b, 2
+brnl sp, b, fail_addr
+
+brnl pop, 13, fail_addr ; The combined result.
+brnl a, sp, fail_addr   ; SP restored to original.
+
+setl pc, pop
+
+; TODO Test some more overlapping combinations, like addl ex, 4.
+
