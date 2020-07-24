@@ -1,0 +1,55 @@
+; Tests for branching and IF instructions.
+
+:fail_branches
+setl pc, fail
+
+:test_suite_branches
+mktest T_branch_skipping_basics, 400
+setl a, 0
+ifew 6, 6
+  addl a, 4
+brnl a, 4, fail_branches
+
+mktest T_branch_skipping_chain, 401
+setl a, 0
+ifgw 12, 9
+  iflw 12, 18
+    addl a, 4
+brnl a, 4, fail_branches
+
+mktest T_branch_skipping_chain, 402
+setl a, 0
+setl b, 0
+
+ifnw 7, 7
+  addl a, 2
+addl b, 3 ; Make sure it doesn't skip this one!
+
+brnl a, 0, fail_branches
+brnl b, 3, fail_branches
+
+mktest T_branch_skipping_chain_long, 403
+setl a, 0
+setl b, 0
+
+ifgw 5, 7
+  iflw 5, 91
+    addl a, 2
+addl b, 3 ; Make sure it doesn't skip this one!
+
+brnl a, 0, fail_branches
+brnl b, 3, fail_branches
+
+mktest T_branch_skipping_chain_long_middle, 404
+setl a, 0
+setl b, 0
+
+ifgw 99, 7
+  iflw 99, 91
+    addl a, 2
+addl b, 3 ; Make sure it doesn't skip this one!
+
+brnl a, 0, fail_branches
+brnl b, 3, fail_branches
+
+setl pc, pop

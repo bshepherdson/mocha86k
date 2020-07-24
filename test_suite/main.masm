@@ -58,6 +58,7 @@ setl [cursor], vram+64 ; Leave a blank line.
 jsrl test_suite_addressing
 jsrl test_suite_interrupts
 jsrl test_suite_math
+jsrl test_suite_branches
 
 
 ; Testing completed successfully!
@@ -73,6 +74,7 @@ setl pc, spin
 .include "test_addressing.masm"
 .include "test_interrupts.masm"
 .include "test_math.masm"
+.include "test_branches.masm"
 
 :spin
 setl pc, spin
