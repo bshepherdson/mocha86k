@@ -37,7 +37,7 @@
 
 ; Looks up devices and populates their numbers.
 :init_hardware
-pshw {x}
+pshl {x}
 hwnw x
 
 :init_hardware_loop
@@ -47,11 +47,11 @@ jsrw _search_dev_table
 setl pc, init_hardware_loop
 
 :init_hardware_loop_end
-popw {x, pc}
+popl {x, pc}
 
 
 :_search_dev_table ; (device number) -> void
-pshw {a, x, y, z}
+pshl {a, x, y, z}
 hwqw a ; A is ID, C version, X manufacturer
 
 setl z, _dev_table
@@ -84,7 +84,8 @@ brll z, _dev_table_end, _search_dev_table_loop
 addl sp, 2 ; Popping the saved A.
 
 :_search_dev_table_done
-popw {x, y, z, pc}
+brk
+popl {x, y, z, pc}
 
 
 :get_device ; (index into _dev_table) -> device number (-1 if not found)

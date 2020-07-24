@@ -42,7 +42,8 @@ brll b, max_cursor, print_char_1
 
 ; Scroll up a line.
 :print_char_scroll
-pshw {i, j}
+brk
+pshl {i, j}
 setl i, vram+32
 setl j, vram+32
 :scroll_loop
@@ -60,7 +61,7 @@ setw [i]+, c
 brll i, max_cursor, clear_line_loop
 
 ; Now done scrolling.
-popw {i, j}
+popl {i, j}
 
 ; If the character was a newline, abort.
 ifew a, 10
