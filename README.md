@@ -98,6 +98,9 @@ DCPU-16.
   than longwords, if they are sufficient for your purposes.
 - Be careful when loading words into registers, as the upper word is not cleared.
   - See "Words and Longwords" above for details.
+- `SP` starts as `0`, which means the first value pushed would go in `[$ffffffff]`.
+  Since your Mocha 86k machine probably doesn't have 4GW of memory(!) you should
+  set `SP` before using the stack.
 - There are no `MOD` and `MDI` instructions; `DIV` and `DVI` put the quotient in
   the destination and remainder in `EX`.
 - Multiplication and division are realistically more expensive than addition.
@@ -483,9 +486,9 @@ That is, `A` is at the lowest address, then `B`, etc. `PC` is always at the
 highest address. That enables function calls with `JSR` to be bracketed like this:
 
 ```
-PSHW {X, Y, A}
+PSHL {X, Y, A}
 ; ...
-POPW {A, X, Y, PC}
+POPL {A, X, Y, PC}
 ```
 
 Note that the order of arguments in the list is ignored.
