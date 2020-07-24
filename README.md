@@ -39,6 +39,7 @@ There are 11 32-bit registers, one 16-bit register, and one single bit flag.
 - 8 general purpose 32-bit registers: `A`, `B`, `C`, `X`, `Y`, `Z`, `I`, `J`.
 - 32-bit program counter `PC`
 - 32-bit stack pointer `SP`
+- 32-bit overflow register `EX`
 - 16-bit interrupt address `IA`
 - Single flag `Q` to control interrupt queueing
 
@@ -217,16 +218,16 @@ In particular, the literal offsets used by the Register offset, and PC- and
 SP-relative indirect modes, are always 1 word. The absolute and immediate
 word/longword modes are always exactly that. It never depends on the `L` bit.
 
-(For clarity, `ADDW B 123456` is encoded as:
+For clarity, `ADDW B 123456` is encoded as:
 ```
 00100000 01111011  opcode
 00000000 00000001  high word
 11100010 01000000  low word
-```)
+```
 
-On the other hand, the effect of the incrementing `[A]+` and decrementing `-[A]`
-modes **are** impacted by the `L` bit. Since this is a 32-bit read or write,
-it reads and writes longwords, and increments/decrements by 2.
+On the other hand, the effect of the incrementing and decrementing modes (eg.
+`[A]+`, `PUSH`) **are** impacted by the `L` bit. Since it's reading or writing a
+32-bit value, it increments/decrements by 2.
 
 
 #### Concept: Effective Address
